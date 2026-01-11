@@ -546,19 +546,205 @@ function getStepData(index) {
     return recipeData.steps[index];
 }
 
+// GitHub API Configuration
+const REPO_OWNER = 'lumios-le-jeu';
+const REPO_NAME = 'mon_pain_francais';
+const FILE_PATH = 'data.js';
+
+// Helper for UTF-8 Base64 encoding
+function utf8_to_b64(str) {
+    return window.btoa(unescape(encodeURIComponent(str)));
+}
+
+async function pushToGitHub() {
+    const token = localStorage.getItem('githubToken');
+    if (!token) {
+        alert("Veuillez d'abord entrer votre Token GitHub dans le champ prévu !");
+        return;
+    }
+
+    // 1. Prepare Content
+    let dataToExport = recipeData;
+    if (customRecipeData) {
+        dataToExport = customRecipeData;
+    }
+    const fileContent = `const recipeData = ${JSON.stringify(dataToExport, null, 4)};`;
+    const contentEncoded = utf8_to_b64(fileContent);
+
+    const btn = document.getElementById('admin-save-btn');
+    const originalText = btn.textContent;
+    btn.textContent = "⏳ Envoi en cours...";
+    btn.disabled = true;
+
+    try {
+        // 2. Get current file SHA (required for update)
+        const getUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
+        const getResponse = await fetch(getUrl, {
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (!getResponse.ok) throw new Error("Impossible de récupérer les infos du fichier sur GitHub.");
+        const fileData = await getResponse.json();
+        const sha = fileData.sha;
+
+        // 3. Push Update (PUT)
+        const putBody = {
+            message: `Update recipe data via Admin UI (${new Date().toLocaleString()})`,
+            content: contentEncoded,
+            sha: sha
+        };
+
+        const putResponse = await fetch(getUrl, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(putBody)
+        });
+
+        if (!putResponse.ok) throw new Error("Erreur lors de l'envoi vers GitHub.");
+
+        alert("✅ Succès ! Les modifications sont en ligne sur GitHub.");
+
+    } catch (e) {
+        console.error(e);
+        alert("❌ Erreur : " + e.message + "\nVérifiez votre Token et votre connexion.");
+    } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function verifyGithubToken(token) {
+    if (!token) return false;
+    try {
+        const response = await fetch('https://api.github.com/user', {
+            headers: { 'Authorization': `token ${token}` }
+        });
+        return response.ok;
+    } catch (e) {
+        return false;
+    }
+}
+
 function toggleAdmin() {
     if (isAdmin) {
         isAdmin = false;
         document.body.classList.remove('admin-enabled');
+
+        // Remove UI Elements
+        const controls = document.getElementById('admin-global-controls');
+        if (controls) controls.remove();
+
         alert("Mode Admin Désactivé");
-        renderCurrentStep(); // Re-render to remove edit UI
+        renderCurrentStep();
     } else {
         const code = prompt("Code d'accès administrateur :");
         if (code === "Francois") {
             isAdmin = true;
             document.body.classList.add('admin-enabled');
-            alert("Mode Admin Activé : Vous pouvez cliquer sur les textes pour les éditer et ajouter des photos.");
-            renderCurrentStep(); // Re-render to add edit UI
+
+            // Create Admin Container
+            const container = document.createElement('div');
+            container.id = 'admin-global-controls';
+            container.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 1000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                align-items: flex-end;
+            `;
+
+            // Token Input
+            const tokenInput = document.createElement('input');
+            tokenInput.type = 'password';
+            tokenInput.placeholder = 'Collez votre Token GitHub ici';
+            tokenInput.title = 'Collez le token pour valider';
+            tokenInput.value = localStorage.getItem('githubToken') || '';
+            tokenInput.style.cssText = `
+                padding: 8px;
+                border-radius: 6px;
+                border: 1px solid rgba(255,255,255,0.2);
+                background: rgba(0,0,0,0.8);
+                color: white;
+                width: 200px;
+                transition: border-color 0.3s;
+            `;
+
+            // Save Button
+            const saveBtn = document.createElement('button');
+            saveBtn.id = 'admin-save-btn';
+            saveBtn.textContent = "Token requis pour publier";
+            saveBtn.disabled = true; // Disabled by default
+            saveBtn.style.cssText = `
+                background: #95a5a6; /* Grey initially */
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 30px;
+                font-weight: bold;
+                cursor: not-allowed;
+                box-shadow: none;
+                transition: all 0.3s;
+            `;
+            saveBtn.onclick = pushToGitHub;
+
+            // Validator Logic
+            let debounceTimer;
+            const validate = async (token) => {
+                if (!token) {
+                    saveBtn.style.background = '#95a5a6';
+                    saveBtn.textContent = "Token requis";
+                    saveBtn.disabled = true;
+                    saveBtn.style.cursor = 'not-allowed';
+                    return;
+                }
+
+                saveBtn.textContent = "⏳ Vérification...";
+
+                const isValid = await verifyGithubToken(token);
+                if (isValid) {
+                    saveBtn.style.background = '#2ecc71';
+                    saveBtn.textContent = "☁️ PUBLIER SUR GITHUB";
+                    saveBtn.disabled = false;
+                    saveBtn.style.cursor = 'pointer';
+                    saveBtn.style.boxShadow = '0 4px 15px rgba(46, 204, 113, 0.4)';
+                    tokenInput.style.borderColor = '#2ecc71';
+                } else {
+                    saveBtn.style.background = '#e74c3c';
+                    saveBtn.textContent = "Token Invalide";
+                    saveBtn.disabled = true;
+                    saveBtn.style.cursor = 'not-allowed';
+                    tokenInput.style.borderColor = '#e74c3c';
+                }
+            };
+
+            // Input Listener
+            tokenInput.oninput = (e) => {
+                const val = e.target.value.trim();
+                localStorage.setItem('githubToken', val);
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => validate(val), 800); // Debounce check
+            };
+
+            container.appendChild(tokenInput);
+            container.appendChild(saveBtn);
+            document.body.appendChild(container);
+
+            // Initial Check if token exists
+            if (tokenInput.value) {
+                validate(tokenInput.value);
+            }
+
+            alert("Mode Admin Activé.\nSi votre Token est valide, le bouton de publication deviendra vert.");
+            renderCurrentStep();
         } else {
             alert("Code incorrect.");
         }
