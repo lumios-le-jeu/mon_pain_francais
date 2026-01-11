@@ -213,7 +213,7 @@ function renderCurrentStep() {
         const slide = document.createElement('div');
         slide.className = 'carousel-slide active';
         slide.innerHTML = `
-            <img src="${src}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMy9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCI+PHRleHQgeD0iMTAiIHk9IjMwIiBmb250LXNpemU9IjMwIj7wn5C4PC90ZXh0Pjwvc3ZnPg=='" />
+            <img src="${src}" onerror="this.parentElement.innerHTML = '<div class=\'image-placeholder\'><span>Image non disponible</span></div>'" />
         `;
         carousel.appendChild(slide);
 
