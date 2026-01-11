@@ -415,6 +415,27 @@ function renderCurrentStep() {
 // Alarm Logic
 let audioCtx;
 let alarmInterval;
+let wakeLock = null;
+
+async function requestWakeLock() {
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Screen Wake Lock acquired');
+        }
+    } catch (err) {
+        console.warn('Wake Lock Error:', err);
+    }
+}
+
+function releaseWakeLock() {
+    if (wakeLock) {
+        wakeLock.release().then(() => {
+            wakeLock = null;
+            console.log('Screen Wake Lock released');
+        });
+    }
+}
 
 // Mobile Audio Fix: "Keep-Alive" Strategy
 // We play a silent sound continuously while the timer runs.
