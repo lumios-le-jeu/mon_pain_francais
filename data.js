@@ -113,7 +113,7 @@ const recipeData = {
                     "unit": "g"
                 }
             ],
-            "timer": 30
+            "timer": 1200
         },
         {
             "id": 5,
