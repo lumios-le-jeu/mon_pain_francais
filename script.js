@@ -407,34 +407,33 @@ function renderCurrentStep() {
 let audioCtx;
 let alarmInterval;
 
-// Mobile Audio Fix: Unlock AudioContext on first user interaction
-function unlockAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// Robust Unlock for iOS: Must be called inside a direct Touch/Click handler
+function ensureAudioReady() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
 
-    // Resume context if suspended
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
 
-    // Play a silent note to force unlock (iOS requirement)
-    const buffer = audioCtx.createBuffer(1, 1, 22050);
-    const source = audioCtx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioCtx.destination);
-    source.start(0);
+    // Play a tiny "silent" sound to force the hardware to wake up
+    // using 0.01 gain instead of 0 just to be sure it registers as "sound"
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
 
-    // cleanup listeners
-    document.removeEventListener('click', unlockAudio);
-    document.removeEventListener('touchstart', unlockAudio);
+    osc.frequency.value = 440; // Standard A4
+    gain.gain.value = 0.0001; // Practically silent
+
+    osc.start(0);
+    osc.stop(audioCtx.currentTime + 0.1);
 }
-// Listen for any interaction to unlock audio
-document.addEventListener('click', unlockAudio);
-document.addEventListener('touchstart', unlockAudio);
 
 function playBeep() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // Ensure it's running
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    // Safety check just in case
+    if (!audioCtx) ensureAudioReady();
 
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
@@ -443,10 +442,10 @@ function playBeep() {
     gainNode.connect(audioCtx.destination);
 
     oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-    oscillator.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.1); // A6
+    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+    oscillator.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.1);
 
-    gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(1, audioCtx.currentTime); // Max volume
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
 
     oscillator.start();
@@ -454,12 +453,9 @@ function playBeep() {
 }
 
 function startAlarm() {
-    // Determine if audio is unlocked
-    if (!audioCtx || audioCtx.state === 'suspended') unlockAudio();
-
-    // Play immediately then loop
+    // Loop beep
     playBeep();
-    alarmInterval = setInterval(playBeep, 1000); // Beep every second
+    alarmInterval = setInterval(playBeep, 1000);
 }
 
 function stopAlarm() {
@@ -493,9 +489,8 @@ function toggleTimer(btn, initialDuration) {
         btn.textContent = 'Reprendre';
     } else {
         // Start
-        // Initialize AudioContext on user interaction to comply with browser policy
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        // Initialize/Wake up AudioContext immediately on this click!
+        ensureAudioReady();
 
         if (Notification && Notification.permission !== "granted" && Notification.permission !== "denied") {
             Notification.requestPermission();
