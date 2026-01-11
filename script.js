@@ -421,6 +421,10 @@ let alarmInterval;
 // This prevents the browser from sleeping the tab or killing the AudioContext.
 let silentOscData = null; // { osc, gain }
 
+// Phase 3: The "Scheduler" Strategy
+// We define the siren sound graph *once* and just control its volume timeline.
+// This allows the alarm to trigger even if the CPU/JS is completely frozen by the OS.
+
 function toggleSilentKeeper(shouldPlay) {
     try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -431,37 +435,94 @@ function toggleSilentKeeper(shouldPlay) {
         }
 
         if (shouldPlay) {
-            // If already playing, do nothing
             if (silentOscData) return;
 
+            // 1. Create Main Oscillator (The Sound)
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
 
+            // 2. Create LFO (The "Wobble" Siren Effect) - No JS loop needed!
+            const lfo = audioCtx.createOscillator();
+            const lfoGain = audioCtx.createGain();
+
+            // Siren Configuration
+            osc.frequency.value = 880; // Base tone
+            osc.type = 'sine';
+
+            lfo.frequency.value = 4; // Wobble speed (4Hz)
+            lfo.type = 'square';     // Harsh wobble
+            lfoGain.gain.value = 200; // Modulation depth (+/- 200Hz)
+
+            // Connect LFO -> Modulate Main Frequency
+            lfo.connect(lfoGain);
+            lfoGain.connect(osc.frequency);
+
+            // Connect Main -> Output
             osc.connect(gain);
             gain.connect(audioCtx.destination);
 
-            // Very low frequency, zero volume
-            osc.frequency.value = 40;
-            gain.gain.value = 0.0001;
+            // Start Silently
+            gain.gain.value = 0.0001; // Practically silent, keeps hardware active
 
             osc.start();
-            silentOscData = { osc, gain };
-            console.log("Audio Keep-Alive Started");
+            lfo.start();
+
+            silentOscData = { osc, gain, lfo, lfoGain };
+            console.log("Audio Chain Started (Silent Mode)");
+
         } else {
-            // Stop
+            // Stop everything
             if (silentOscData) {
-                silentOscData.osc.stop();
-                silentOscData.osc.disconnect();
-                silentOscData.gain.disconnect();
+                try {
+                    silentOscData.osc.stop();
+                    silentOscData.lfo.stop();
+                    // Disconnect to clean up
+                    silentOscData.osc.disconnect();
+                    silentOscData.lfo.disconnect();
+                    silentOscData.lfoGain.disconnect();
+                    silentOscData.gain.disconnect();
+                } catch (e) { }
                 silentOscData = null;
-                console.log("Audio Keep-Alive Stopped");
+
+                // Cancel any future alarm schedules if stopping early!
+                if (audioCtx && silentOscData && silentOscData.gain) {
+                    silentOscData.gain.gain.cancelScheduledValues(0);
+                }
             }
         }
     } catch (e) {
         console.error("Audio Keeper Error", e);
-        // Do not block the timer if audio fails!
     }
 }
+
+// Function to Schedule the volume jump in the future
+// This sends the command to the Hardware immediately.
+function scheduleAlarmEvent(secondsFromNow) {
+    if (!silentOscData || !audioCtx) return;
+
+    const now = audioCtx.currentTime;
+    const triggerTime = now + secondsFromNow;
+
+    console.log("Scheduling alarm for:", triggerTime);
+
+    // Secure the timeline: Stay silent until target time
+    silentOscData.gain.gain.setValueAtTime(0.0001, now);
+    silentOscData.gain.gain.setValueAtTime(0.0001, triggerTime - 0.1);
+
+    // BAM! Volume up at target time. 
+    // The hardware will execute this even if Phone is Locked.
+    silentOscData.gain.gain.linearRampToValueAtTime(1, triggerTime);
+}
+
+function startAlarm() {
+    // Redundant now, but kept for logic consistency if triggered manually
+    if (silentOscData) {
+        silentOscData.gain.gain.cancelScheduledValues(0);
+        silentOscData.gain.gain.value = 1;
+    }
+}
+// END Phase 3 Audio Engine
+
 
 // Ensure audio is unlocked on first touch just in case
 document.addEventListener('touchstart', function () {
