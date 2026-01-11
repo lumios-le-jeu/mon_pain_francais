@@ -410,13 +410,22 @@ let alarmInterval;
 // Mobile Audio Fix: Unlock AudioContext on first user interaction
 function unlockAudio() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Resume context if suspended
     if (audioCtx.state === 'suspended') {
-        audioCtx.resume().then(() => {
-            // Remove listeners once unlocked
-            document.removeEventListener('click', unlockAudio);
-            document.removeEventListener('touchstart', unlockAudio);
-        });
+        audioCtx.resume();
     }
+
+    // Play a silent note to force unlock (iOS requirement)
+    const buffer = audioCtx.createBuffer(1, 1, 22050);
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
+    source.start(0);
+
+    // cleanup listeners
+    document.removeEventListener('click', unlockAudio);
+    document.removeEventListener('touchstart', unlockAudio);
 }
 // Listen for any interaction to unlock audio
 document.addEventListener('click', unlockAudio);
