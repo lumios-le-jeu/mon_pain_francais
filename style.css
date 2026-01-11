@@ -25,10 +25,20 @@ body {
     color: var(--text-color);
     font-family: var(--font-main);
     height: 100vh;
+    /* Fallback */
+    height: 100dvh;
+    /* Mobile friendly */
     display: flex;
     justify-content: center;
     overflow: hidden;
     /* App-like feel */
+}
+
+/* Prevent iOS Zoom on focus */
+input,
+select,
+textarea {
+    font-size: 16px !important;
 }
 
 /* Custom Scrollbar */
@@ -114,6 +124,7 @@ header {
     width: 80px;
     text-align: right;
     font-family: inherit;
+    /* Font size handled globally to prevent zoom */
 }
 
 main {
