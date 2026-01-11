@@ -637,14 +637,23 @@ function stopAlarm() {
     // Stop the hijacked silent oscillator if it was used
     if (silentOscData) {
         try {
-            // Ramp down to silence instead of stop, or just kill it
-            // Better to kill it to stop the noise
             silentOscData.osc.stop();
+            silentOscData.lfo.stop();
+            // Disconnect to clean up
             silentOscData.osc.disconnect();
+            silentOscData.lfo.disconnect();
+            silentOscData.lfoGain.disconnect();
             silentOscData.gain.disconnect();
         } catch (e) { }
         silentOscData = null;
+
+        // Cancel any future alarm schedules if stopping early!
+        if (audioCtx && silentOscData && silentOscData.gain) {
+            silentOscData.gain.gain.cancelScheduledValues(0);
+        }
     }
+
+    releaseWakeLock(); // Release screen lock
 
     if (audioCtx) {
         // audioCtx.suspend(); 
@@ -676,12 +685,15 @@ function toggleTimer(btn, initialDuration) {
         }
 
         toggleSilentKeeper(false); // Stop Keep-Alive
+        releaseWakeLock(); // Release lock on pause
+
         timerendTime = null;
         saveState();
         btn.textContent = 'Reprendre';
     } else {
         // Start
         toggleSilentKeeper(true); // Start Audio Engine (Silent)
+        requestWakeLock(); // Keep screen ON
 
         // SCHEDULING: Tell the audio hardware NOW when to scream later.
         // This is robust against JS freezing.
