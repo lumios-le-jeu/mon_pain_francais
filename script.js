@@ -501,20 +501,66 @@ function playBeep() {
     oscillator.stop(audioCtx.currentTime + 0.5);
 }
 
+// Siren Logic (Double Beep)
+function scheduleBeepPattern(osc, gainNode, startTime) {
+    // Beep 1
+    osc.frequency.setValueAtTime(880, startTime);
+    osc.frequency.linearRampToValueAtTime(880, startTime + 0.2);
+    gainNode.gain.setValueAtTime(1, startTime);
+    gainNode.gain.setValueAtTime(0, startTime + 0.2);
+
+    // Beep 2
+    osc.frequency.setValueAtTime(1200, startTime + 0.3);
+    osc.frequency.linearRampToValueAtTime(1200, startTime + 0.5);
+    gainNode.gain.setValueAtTime(1, startTime + 0.3);
+    gainNode.gain.setValueAtTime(0, startTime + 0.5);
+}
+
 function startAlarm() {
-    // Loop beep
-    playBeep();
-    alarmInterval = setInterval(playBeep, 1000);
+    // Try to hijack the existing silent oscillator first (Best for iOS Background)
+    if (silentOscData && silentOscData.osc && silentOscData.gain) {
+        console.log("Hijacking silent oscillator for alarm...");
+        const { osc, gain } = silentOscData;
+        const now = audioCtx.currentTime;
+
+        // Cancel silence
+        gain.gain.cancelScheduledValues(now);
+        osc.frequency.cancelScheduledValues(now);
+
+        // Schedule loop
+        // We can't loop an AudioParam schedule easily without a custom loop function
+        // But we can schedule many beeps in advance
+        for (let i = 0; i < 60; i++) { // Schedule 60 seconds of alarm
+            scheduleBeepPattern(osc, gain, now + i);
+        }
+    } else {
+        // Fallback: Create new oscillator (Standard)
+        playBeep();
+        alarmInterval = setInterval(playBeep, 1000);
+    }
 }
 
 function stopAlarm() {
-    clearInterval(alarmInterval);
-    alarmInterval = null;
+    if (alarmInterval) {
+        clearInterval(alarmInterval);
+        alarmInterval = null;
+    }
+
+    // Stop the hijacked silent oscillator if it was used
+    if (silentOscData) {
+        try {
+            // Ramp down to silence instead of stop, or just kill it
+            // Better to kill it to stop the noise
+            silentOscData.osc.stop();
+            silentOscData.osc.disconnect();
+            silentOscData.gain.disconnect();
+        } catch (e) { }
+        silentOscData = null;
+    }
+
     if (audioCtx) {
-        // Stop logic if needed, or just suspend to save battery?
-        // keeping it active is safer for next timer, but suspending saves battery.
-        // Let's NOT suspend, to keep it ready for next steps.
         // audioCtx.suspend(); 
+        // Keep context alive? No, usually fine to iterate.
     }
 }
 
@@ -572,13 +618,14 @@ function toggleTimer(btn, initialDuration) {
             if (remainingTime <= 0) {
                 clearInterval(intervalId);
                 intervalId = null;
-                toggleSilentKeeper(false); // Stop Keep-Alive (Alarm will take over)
+                // Do NOT stop silent keeper here; we hijack it for the alarm
+                // toggleSilentKeeper(false); 
 
                 btn.textContent = 'ALERTE - Arrêter';
                 btn.classList.add('alarm-active');
                 startAlarm();
 
-                if (Notification && Notification.permission === "granted") {
+                if (typeof Notification !== 'undefined' && Notification.permission === "granted") {
                     new Notification("Mon Pain Français", { body: "Le minuteur est terminé !" });
                 }
 
