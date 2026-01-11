@@ -1,0 +1,689 @@
+// Data is now loaded globally via data.js in index.html
+
+// State
+let currentStepIndex = 0;
+let userTargetWeight = 1700;
+let timersState = {};
+let intervalId = null;
+let remainingTime = null;
+let timerendTime = null; // Timestamp for timer persistence
+
+// DOM Elements
+const stepContainer = document.getElementById('step-container');
+const prevBtn = document.getElementById('prev-btn');
+const nextBtn = document.getElementById('next-btn');
+const weightInput = document.getElementById('bread-weight');
+const progressDotsContainer = document.getElementById('progress-dots');
+
+// Constants
+const BASE_WEIGHT = recipeData.baseWeight;
+
+// Initialization
+function init() {
+    // Setup listeners
+    weightInput.addEventListener('change', (e) => {
+        const val = parseInt(e.target.value);
+        if (val && val > 0) {
+            userTargetWeight = val;
+            saveState(); // Save on change
+            renderCurrentStep();
+        }
+    });
+
+    prevBtn.addEventListener('click', () => navigate(-1));
+    nextBtn.addEventListener('click', () => navigate(1));
+
+    // Restore state from local storage
+    loadState();
+
+    // Initial render
+    createProgressDots();
+    renderCurrentStep();
+    updateProgressDots(); // Ensure dots reflect loaded state
+}
+
+function saveState() {
+    const state = {
+        step: currentStepIndex,
+        weight: userTargetWeight,
+        timerEndTime: timerendTime // Save absolute timestamp
+    };
+    localStorage.setItem('breadAppState', JSON.stringify(state));
+}
+
+function loadState() {
+    const saved = localStorage.getItem('breadAppState');
+    if (saved) {
+        try {
+            const state = JSON.parse(saved);
+            currentStepIndex = state.step || 0;
+            userTargetWeight = state.weight || 1700;
+            weightInput.value = userTargetWeight;
+
+            // Timer Recovery
+            if (state.timerEndTime) {
+                const now = Date.now();
+                const left = Math.ceil((state.timerEndTime - now) / 1000);
+
+                if (left > 0) {
+                    timerendTime = state.timerEndTime;
+                    remainingTime = left;
+                } else {
+                    timerendTime = null;
+                    remainingTime = 0; // Finished while away
+                }
+            }
+        } catch (e) {
+            console.error("Error loading state", e);
+        }
+    }
+}
+
+function resetApp() {
+    if (confirm("Voulez-vous vraiment tout remettre à zéro ?")) {
+        localStorage.removeItem('breadAppState');
+        stopAlarm();
+        location.reload();
+    }
+}
+
+function createProgressDots() {
+    progressDotsContainer.innerHTML = '';
+    recipeData.steps.forEach((_, index) => {
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        if (index === currentStepIndex) dot.classList.add('active');
+        progressDotsContainer.appendChild(dot);
+    });
+}
+
+function updateProgressDots() {
+    const dots = document.querySelectorAll('.dot');
+    dots.forEach((dot, index) => {
+        dot.className = 'dot';
+        dot.classList.remove('active', 'passed');
+        if (index < currentStepIndex) dot.classList.add('passed');
+        if (index === currentStepIndex) dot.classList.add('active');
+    });
+}
+
+function navigate(direction) {
+    if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+        timerendTime = null;
+        remainingTime = null;
+        saveState();
+    }
+
+    const newIndex = currentStepIndex + direction;
+    if (newIndex >= 0 && newIndex < recipeData.steps.length) {
+        currentStepIndex = newIndex;
+        currentImageIndex = 0; // Reset image carousel
+        saveState();
+        renderCurrentStep();
+        updateProgressDots();
+    }
+}
+
+function calculateAmount(baseAmount) {
+    // Scaling formula: (Target / Base) * IngredientAmount
+    const ratio = userTargetWeight / BASE_WEIGHT;
+    return Math.round(baseAmount * ratio);
+}
+
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+
+    if (h > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// Helper to manage carousel state locally in DOM or global? 
+// Simple global or per-render var is easiest since we re-render on step change.
+let currentImageIndex = 0;
+// Reset when step changes.
+// We need to hook into navigate() to reset this.
+
+function nextImage(max) {
+    currentImageIndex++;
+    if (currentImageIndex >= max) currentImageIndex = 0;
+    renderCurrentStep(); // Simple re-render to update view
+}
+
+function prevImage(max) {
+    currentImageIndex--;
+    if (currentImageIndex < 0) currentImageIndex = max - 1;
+    renderCurrentStep();
+}
+
+function renderCurrentStep() {
+    const step = getStepData(currentStepIndex); // Use dynamic getter
+
+    // Update Buttons
+    prevBtn.disabled = currentStepIndex === 0;
+    nextBtn.disabled = currentStepIndex === recipeData.steps.length - 1;
+    nextBtn.textContent = (currentStepIndex === recipeData.steps.length - 1) ? "Terminé" : "Suivant";
+
+    // Clear Container
+    stepContainer.innerHTML = '';
+
+    // Card
+    const card = document.createElement('div');
+    card.className = 'step-card';
+
+    // Images Display
+    let images = [];
+    if (step.images && step.images.length > 0) {
+        images = step.images;
+    } else if (step.image) {
+        images = [step.image];
+    }
+
+    // Safety check for index
+    if (currentImageIndex >= images.length) currentImageIndex = 0;
+    if (images.length > 0 && currentImageIndex < 0) currentImageIndex = 0;
+
+    // Image Container with Carousel
+    const imgWrapper = document.createElement('div');
+    imgWrapper.className = 'step-image-container';
+
+    // If Admin, add upload button overlay or below? 
+    // User wants "Displayed large".
+    // Let's put the Admin Upload button below text or top right absolute.
+    // Let's keep it simple: Add button via text link or overlay.
+
+    if (images.length === 0) {
+        imgWrapper.innerHTML = `
+            <div class="image-placeholder">
+                <div>📷</div>
+                <span>Pas de photo</span>
+            </div>
+        `;
+    } else {
+        const carousel = document.createElement('div');
+        carousel.className = 'carousel-container';
+
+        // Single Active Image
+        const src = images[currentImageIndex];
+        const slide = document.createElement('div');
+        slide.className = 'carousel-slide active';
+        slide.innerHTML = `
+            <img src="${src}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMy9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCI+PHRleHQgeD0iMTAiIHk9IjMwIiBmb250LXNpemU9IjMwIj7wn5C4PC90ZXh0Pjwvc3ZnPg=='" />
+        `;
+        carousel.appendChild(slide);
+
+        // Navigation
+        if (images.length > 1) {
+            const prev = document.createElement('button');
+            prev.className = 'carousel-nav carousel-prev';
+            prev.innerHTML = '‹';
+            prev.onclick = () => prevImage(images.length);
+
+            const next = document.createElement('button');
+            next.className = 'carousel-nav carousel-next';
+            next.innerHTML = '›';
+            next.onclick = () => nextImage(images.length);
+
+            carousel.appendChild(prev);
+            carousel.appendChild(next);
+
+            // Dots
+            const dots = document.createElement('div');
+            dots.className = 'carousel-dots';
+            images.forEach((_, idx) => {
+                const dot = document.createElement('div');
+                dot.className = `c-dot ${idx === currentImageIndex ? 'active' : ''}`;
+                // dot.onclick = () => { currentImageIndex = idx; renderCurrentStep(); };
+                dots.appendChild(dot);
+            });
+            carousel.appendChild(dots);
+        }
+
+        imgWrapper.appendChild(carousel);
+    }
+    card.appendChild(imgWrapper);
+
+    // Admin Upload Control & Thumbnails
+    if (isAdmin) {
+        const adminControls = document.createElement('div');
+        adminControls.className = 'admin-controls';
+        adminControls.style.marginTop = '0';
+        adminControls.style.borderTopLeftRadius = '0';
+        adminControls.style.borderTopRightRadius = '0';
+
+        let thumbsHTML = '';
+        if (images.length > 0) {
+            thumbsHTML = `<div class="admin-thumbs" style="display:flex; gap:5px; overflow-x:auto; margin-top:10px; padding-bottom:5px;">`;
+            images.forEach((img, idx) => {
+                thumbsHTML += `
+                    <div style="position:relative; width:50px; height:50px; flex:0 0 50px; border:${idx === currentImageIndex ? '2px solid var(--primary-color)' : '1px solid #555'}; border-radius:4px; overflow:hidden;">
+                        <img src="${img}" style="width:100%; height:100%; object-fit:cover; cursor:pointer;" onclick="currentImageIndex=${idx}; renderCurrentStep();">
+                        <button style="position:absolute; top:0; right:0; background:red; color:white; border:none; width:15px; height:15px; font-size:10px; cursor:pointer;" onclick="event.stopPropagation(); removeStepImage(${currentStepIndex}, ${idx})">×</button>
+                    </div>
+                 `;
+            });
+            thumbsHTML += `</div>`;
+        }
+
+        adminControls.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:0.8rem; opacity:0.7;">Photo ${currentImageIndex + 1}/${Math.max(1, images.length)}</span>
+                <label class="upload-btn" style="font-size:0.8rem; padding:4px 8px;">
+                    + Ajouter une photo
+                    <input type="file" style="display:none" onchange="handleFileUpload(this.files[0])">
+                </label>
+            </div>
+            ${thumbsHTML}
+         `;
+        card.appendChild(adminControls);
+    }
+
+    // Content Content
+    const content = document.createElement('div');
+    content.className = 'step-content';
+
+    // Title
+    const title = document.createElement('h2');
+    title.className = 'step-title editable-field';
+    title.textContent = step.title;
+    if (isAdmin) {
+        title.contentEditable = true;
+        title.onblur = (e) => saveCustomStep(currentStepIndex, 'title', e.target.innerText);
+    }
+    content.appendChild(title);
+
+    // Ingredients
+    if (step.ingredients && step.ingredients.length > 0) {
+        const ingBox = document.createElement('div');
+        ingBox.className = 'ingredients-box';
+        const h4 = document.createElement('h4');
+        h4.textContent = `Ingrédients (pour ${userTargetWeight}g)`;
+        ingBox.appendChild(h4);
+
+        step.ingredients.forEach(ing => {
+            const row = document.createElement('div');
+            row.className = 'ingredient-row';
+            const scaledAmount = calculateAmount(ing.amount);
+            row.innerHTML = `<span>${ing.name}</span> <span>${scaledAmount} ${ing.unit}</span>`;
+            ingBox.appendChild(row);
+        });
+        content.appendChild(ingBox);
+    }
+
+    // Instructions
+    // Handling array of instructions is hard with contentEditable.
+    // Admin Mode: View as individual editable paragraphs.
+    const ul = document.createElement('ul');
+    ul.className = 'instructions';
+    step.instructions.forEach((text, i) => {
+        const li = document.createElement('li');
+        const span = document.createElement('span');
+        span.className = 'editable-field';
+        span.textContent = text;
+        if (isAdmin) {
+            span.contentEditable = true;
+            span.onblur = (e) => {
+                // Update specific instruction line
+                if (!customRecipeData) customRecipeData = JSON.parse(JSON.stringify(recipeData));
+                customRecipeData.steps[currentStepIndex].instructions[i] = e.target.innerText;
+                localStorage.setItem('breadAppCustomData', JSON.stringify(customRecipeData));
+            };
+        }
+        li.appendChild(span);
+        ul.appendChild(li);
+    });
+    content.appendChild(ul);
+
+    // Add instruction button for admin?
+    if (isAdmin) {
+        const addInstBtn = document.createElement('button');
+        addInstBtn.textContent = "+ Ajouter instruction";
+        addInstBtn.className = "reset-app-btn";
+        addInstBtn.onclick = () => {
+            if (!customRecipeData) customRecipeData = JSON.parse(JSON.stringify(recipeData));
+            customRecipeData.steps[currentStepIndex].instructions.push("Nouvelle instruction...");
+            localStorage.setItem('breadAppCustomData', JSON.stringify(customRecipeData));
+            renderCurrentStep();
+        };
+        content.appendChild(addInstBtn);
+    }
+
+    // Timer
+    if (step.timer && step.timer > 0) {
+        const timerBox = document.createElement('div');
+        timerBox.className = 'timer-box';
+
+        let displayTime = remainingTime || step.timer;
+        if (remainingTime === 0 && timerendTime) displayTime = 0;
+        if (remainingTime === null) displayTime = step.timer;
+
+        const display = document.createElement('div');
+        display.className = 'timer-display';
+        display.id = 'timer-display';
+        display.textContent = formatTime(displayTime);
+
+        const controls = document.createElement('div');
+        controls.className = 'timer-controls';
+
+        const startBtn = document.createElement('button');
+        startBtn.className = 'btn-timer';
+        startBtn.textContent = 'Démarrer';
+        startBtn.onclick = () => toggleTimer(startBtn, step.timer);
+
+        if (timerendTime && remainingTime > 0) {
+            startBtn.click();
+        } else if (timerendTime && remainingTime === 0) {
+            startBtn.textContent = 'ALERTE - Arrêter';
+            startBtn.classList.add('alarm-active');
+            startAlarm();
+            if (Notification && Notification.permission === "granted") {
+                new Notification("Mon Pain Français", { body: "Le temps est écoulé (pendant votre absence) !" });
+            }
+        }
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'btn-timer';
+        resetBtn.textContent = 'Reset';
+        resetBtn.onclick = () => resetTimer(startBtn, step.timer);
+
+        controls.appendChild(startBtn);
+        controls.appendChild(resetBtn);
+
+        timerBox.appendChild(display);
+        timerBox.appendChild(controls);
+        content.appendChild(timerBox);
+    }
+
+    card.appendChild(content);
+    stepContainer.appendChild(card);
+}
+
+// Alarm Logic
+let audioCtx;
+let alarmInterval;
+
+function playBeep() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+    oscillator.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.1); // A6
+
+    gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.5);
+}
+
+function startAlarm() {
+    // Play immediately then loop
+    playBeep();
+    alarmInterval = setInterval(playBeep, 1000); // Beep every second
+}
+
+function stopAlarm() {
+    clearInterval(alarmInterval);
+    alarmInterval = null;
+    if (audioCtx) audioCtx.suspend();
+}
+
+function toggleTimer(btn, initialDuration) {
+    // If alarm is ringing (btn says "Arrêter")
+    if (btn.classList.contains('alarm-active')) {
+        stopAlarm();
+        btn.classList.remove('alarm-active');
+        btn.textContent = 'Terminé';
+        timerendTime = null;
+        saveState();
+        return;
+    }
+
+    if (intervalId) {
+        // Pause
+        clearInterval(intervalId);
+        intervalId = null;
+        timerendTime = null;
+        saveState();
+        btn.textContent = 'Reprendre';
+    } else {
+        // Start
+        // Initialize AudioContext on user interaction to comply with browser policy
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        if (Notification && Notification.permission !== "granted" && Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+
+        if (!remainingTime) remainingTime = initialDuration;
+
+        if (!timerendTime) {
+            timerendTime = Date.now() + (remainingTime * 1000);
+            saveState();
+        }
+
+        btn.textContent = 'Pause';
+        intervalId = setInterval(() => {
+            const now = Date.now();
+            const left = Math.ceil((timerendTime - now) / 1000);
+            remainingTime = left;
+
+            if (document.getElementById('timer-display')) {
+                // If negative, show 00:00 or stay at 0
+                const showTime = remainingTime > 0 ? remainingTime : 0;
+                document.getElementById('timer-display').textContent = formatTime(showTime);
+            }
+
+            if (remainingTime <= 0) {
+                clearInterval(intervalId);
+                intervalId = null;
+
+                btn.textContent = 'ALERTE - Arrêter';
+                btn.classList.add('alarm-active');
+                startAlarm();
+
+                if (Notification && Notification.permission === "granted") {
+                    new Notification("Mon Pain Français", { body: "Le minuteur est terminé !" });
+                }
+
+                timerendTime = null;
+                saveState();
+            }
+        }, 1000);
+    }
+}
+
+function resetTimer(startBtn, initialDuration) {
+    clearInterval(intervalId);
+    intervalId = null;
+    timerendTime = null;
+    remainingTime = initialDuration;
+    saveState();
+
+    if (document.getElementById('timer-display'))
+        document.getElementById('timer-display').textContent = formatTime(remainingTime);
+
+    startBtn.textContent = 'Démarrer';
+    startBtn.classList.remove('alarm-active');
+    stopAlarm();
+}
+
+// Start
+// Start
+// init(); // Removed strict call, will rely on end of file
+
+let isAdmin = false;
+let customRecipeData = null; // Overrides
+
+function loadCustomData() {
+    const saved = localStorage.getItem('breadAppCustomData');
+    if (saved) {
+        try {
+            customRecipeData = JSON.parse(saved);
+            // Merge logic: currently simple, we just use customData if present for steps
+            // Ideally we shallow merge to keep structure if code updates.
+            // For now, let's assume customData is the full source of truth if exists.
+        } catch (e) { console.error("Bad custom data", e); }
+    }
+}
+
+function getStepData(index) {
+    if (customRecipeData && customRecipeData.steps && customRecipeData.steps[index]) {
+        return customRecipeData.steps[index];
+    }
+    return recipeData.steps[index];
+}
+
+function toggleAdmin() {
+    if (isAdmin) {
+        isAdmin = false;
+        document.body.classList.remove('admin-enabled');
+        alert("Mode Admin Désactivé");
+        renderCurrentStep(); // Re-render to remove edit UI
+    } else {
+        const code = prompt("Code d'accès administrateur :");
+        if (code === "Francois") {
+            isAdmin = true;
+            document.body.classList.add('admin-enabled');
+            alert("Mode Admin Activé : Vous pouvez cliquer sur les textes pour les éditer et ajouter des photos.");
+            renderCurrentStep(); // Re-render to add edit UI
+        } else {
+            alert("Code incorrect.");
+        }
+    }
+}
+
+function saveCustomStep(index, field, value) {
+    if (!customRecipeData) {
+        // Clone original info deep copy
+        customRecipeData = JSON.parse(JSON.stringify(recipeData));
+    }
+
+    // Update
+    if (field === 'instructions') {
+        // Value is innerText, split by lines? Or just block?
+        // Our renderer expects array. 
+        // For simplicity let's assume user edits one block locally, 
+        // but converting UL text back to array is tricky if we make the UL editable.
+        // Better: make each LI editable?
+        // Let's defer instruction complex editing.
+        // Implementing simple title edit first.
+        customRecipeData.steps[index][field] = value;
+    } else {
+        customRecipeData.steps[index][field] = value;
+    }
+
+    localStorage.setItem('breadAppCustomData', JSON.stringify(customRecipeData));
+}
+
+function addStepImage(index, base64) {
+    if (!customRecipeData) customRecipeData = JSON.parse(JSON.stringify(recipeData));
+
+    const step = customRecipeData.steps[index];
+    if (!step.images) step.images = [];
+    // If there was a single image, push it first?
+    if (step.image && step.images.length === 0) step.images.push(step.image);
+
+    step.images.push(base64);
+    // Update main image to be the last one added? Or just use images array logic in render
+    step.image = base64; // Fallback for legacy
+
+    localStorage.setItem('breadAppCustomData', JSON.stringify(customRecipeData));
+    renderCurrentStep();
+}
+
+function removeStepImage(stepIndex, imgIndex) {
+    if (!customRecipeData) customRecipeData = JSON.parse(JSON.stringify(recipeData));
+    const step = customRecipeData.steps[stepIndex];
+    if (step.images) {
+        step.images.splice(imgIndex, 1);
+        // Reset legacy main image
+        step.image = step.images.length > 0 ? step.images[0] : "";
+        localStorage.setItem('breadAppCustomData', JSON.stringify(customRecipeData));
+        renderCurrentStep();
+    }
+}
+
+// Compress Image Logic
+function handleFileUpload(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const img = new Image();
+        img.onload = function () {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Resize logic
+            const MAX_WIDTH = 800;
+            const MAX_HEIGHT = 800;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width *= MAX_HEIGHT / height;
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Compress to JPEG 0.7
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            addStepImage(currentStepIndex, dataUrl);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+// Attach global listener for file input
+const globalFileInput = document.getElementById('global-file-input');
+if (globalFileInput) {
+    globalFileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+            handleFileUpload(e.target.files[0]);
+            e.target.value = ''; // Reset
+        }
+    });
+}
+
+// Update Render Function to use getStepData and Admin UI
+// We MUST overwrite the previous renderCurrentStep completely to include admin logic.
+
+window.toggleAdmin = toggleAdmin; // Expose to global scope for HTML button
+
+// Need to update renderCurrentStep to support:
+// 1. Multiple images
+// 2. Editable Content
+// 3. Admin Controls (Upload)
+
+// Overwriting renderCurrentStep implies replacing it. 
+// I will insert it here. But wait, I'm appending to the file?
+// Replace tool usage needs to TARGET the existing renderCurrentStep.
+// Let's modify the previous `renderCurrentStep` in the existing file blocks.
+// I will place `init()` at the end.
+
+loadCustomData();
+init();
+
