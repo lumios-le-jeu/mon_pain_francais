@@ -407,8 +407,25 @@ function renderCurrentStep() {
 let audioCtx;
 let alarmInterval;
 
+// Mobile Audio Fix: Unlock AudioContext on first user interaction
+function unlockAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => {
+            // Remove listeners once unlocked
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('touchstart', unlockAudio);
+        });
+    }
+}
+// Listen for any interaction to unlock audio
+document.addEventListener('click', unlockAudio);
+document.addEventListener('touchstart', unlockAudio);
+
 function playBeep() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Ensure it's running
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
@@ -428,6 +445,9 @@ function playBeep() {
 }
 
 function startAlarm() {
+    // Determine if audio is unlocked
+    if (!audioCtx || audioCtx.state === 'suspended') unlockAudio();
+
     // Play immediately then loop
     playBeep();
     alarmInterval = setInterval(playBeep, 1000); // Beep every second
@@ -436,7 +456,12 @@ function startAlarm() {
 function stopAlarm() {
     clearInterval(alarmInterval);
     alarmInterval = null;
-    if (audioCtx) audioCtx.suspend();
+    if (audioCtx) {
+        // Stop logic if needed, or just suspend to save battery?
+        // keeping it active is safer for next timer, but suspending saves battery.
+        // Let's NOT suspend, to keep it ready for next steps.
+        // audioCtx.suspend(); 
+    }
 }
 
 function toggleTimer(btn, initialDuration) {
