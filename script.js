@@ -517,22 +517,28 @@ function scheduleBeepPattern(osc, gainNode, startTime) {
 }
 
 function startAlarm() {
-    // Try to hijack the existing silent oscillator first (Best for iOS Background)
+    // Strategy: Immediate Loud Noise (Simpler is better for background)
     if (silentOscData && silentOscData.osc && silentOscData.gain) {
         console.log("Hijacking silent oscillator for alarm...");
         const { osc, gain } = silentOscData;
-        const now = audioCtx.currentTime;
 
-        // Cancel silence
-        gain.gain.cancelScheduledValues(now);
-        osc.frequency.cancelScheduledValues(now);
+        // Immediate Override (No scheduling)
+        gain.gain.cancelScheduledValues(0);
+        osc.frequency.cancelScheduledValues(0);
 
-        // Schedule loop
-        // We can't loop an AudioParam schedule easily without a custom loop function
-        // But we can schedule many beeps in advance
-        for (let i = 0; i < 60; i++) { // Schedule 60 seconds of alarm
-            scheduleBeepPattern(osc, gain, now + i);
-        }
+        gain.gain.value = 1; // Max volume immediately
+
+        // Siren Logic via setInterval (JavaScript thread is kept alive by oscillator)
+        let toggle = false;
+        const sirenLoop = () => {
+            if (!silentOscData) return; // Stopped
+            // Alternating frequency 880Hz <-> 1200Hz
+            osc.frequency.value = toggle ? 1200 : 880;
+            toggle = !toggle;
+        };
+        sirenLoop(); // First beep
+        alarmInterval = setInterval(sirenLoop, 500); // Toggle every 500ms
+
     } else {
         // Fallback: Create new oscillator (Standard)
         playBeep();
@@ -605,6 +611,11 @@ function toggleTimer(btn, initialDuration) {
 
         btn.textContent = 'Pause';
         intervalId = setInterval(() => {
+            // Force Audio Resume on every tick (Anti-Sleep for iOS)
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(() => { });
+            }
+
             const now = Date.now();
             const left = Math.ceil((timerendTime - now) / 1000);
             remainingTime = left;
