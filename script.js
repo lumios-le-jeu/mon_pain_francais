@@ -586,13 +586,27 @@ function toggleTimer(btn, initialDuration) {
         // Pause
         clearInterval(intervalId);
         intervalId = null;
+
+        // Cancel the scheduled scream!
+        if (silentOscData && silentOscData.gain) {
+            silentOscData.gain.gain.cancelScheduledValues(0);
+            silentOscData.gain.gain.value = 0.0001; // Back to silence
+        }
+
         toggleSilentKeeper(false); // Stop Keep-Alive
         timerendTime = null;
         saveState();
         btn.textContent = 'Reprendre';
     } else {
         // Start
-        toggleSilentKeeper(true); // Start Keep-Alive (Must be user gesture)
+        toggleSilentKeeper(true); // Start Audio Engine (Silent)
+
+        // SCHEDULING: Tell the audio hardware NOW when to scream later.
+        // This is robust against JS freezing.
+        if (remainingTime || initialDuration) {
+            const duration = remainingTime ? remainingTime : parseInt(initialDuration);
+            scheduleAlarmEvent(duration);
+        }
 
         try {
             if (typeof Notification !== 'undefined' && Notification.permission !== "granted" && Notification.permission !== "denied") {
