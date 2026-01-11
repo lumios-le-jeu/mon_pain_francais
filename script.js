@@ -407,37 +407,77 @@ function renderCurrentStep() {
 let audioCtx;
 let alarmInterval;
 
-// Robust Unlock for iOS: Must be called inside a direct Touch/Click handler
-function ensureAudioReady() {
-    if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// Mobile Audio Fix: "Keep-Alive" Strategy
+// We play a silent sound continuously while the timer runs.
+// This prevents the browser from sleeping the tab or killing the AudioContext.
+let silentOscData = null; // { osc, gain }
+
+function toggleSilentKeeper(shouldPlay) {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Resume if needed
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(e => console.log(e));
+        }
+
+        if (shouldPlay) {
+            // If already playing, do nothing
+            if (silentOscData) return;
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            // Very low frequency, zero volume
+            osc.frequency.value = 40;
+            gain.gain.value = 0.0001;
+
+            osc.start();
+            silentOscData = { osc, gain };
+            console.log("Audio Keep-Alive Started");
+        } else {
+            // Stop
+            if (silentOscData) {
+                silentOscData.osc.stop();
+                silentOscData.osc.disconnect();
+                silentOscData.gain.disconnect();
+                silentOscData = null;
+                console.log("Audio Keep-Alive Stopped");
+            }
+        }
+    } catch (e) {
+        console.error("Audio Keeper Error", e);
+        // Do not block the timer if audio fails!
     }
-
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
-
-    // Play a tiny "silent" sound to force the hardware to wake up
-    // using 0.01 gain instead of 0 just to be sure it registers as "sound"
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-
-    osc.frequency.value = 440; // Standard A4
-    gain.gain.value = 0.0001; // Practically silent
-
-    osc.start(0);
-    osc.stop(audioCtx.currentTime + 0.1);
 }
 
+// Ensure audio is unlocked on first touch just in case
+document.addEventListener('touchstart', function () {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { }
+}, { once: true });
+document.addEventListener('click', function () {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { }
+}, { once: true });
+
+
 function playBeep() {
-    // Safety check just in case
-    if (!audioCtx) ensureAudioReady();
+    // Ensure context exists
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
 
+    // ... existing beep logic
     oscillator.connect(gainNode);
     gainNode.connect(audioCtx.destination);
 
@@ -445,7 +485,7 @@ function playBeep() {
     oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
     oscillator.frequency.setValueAtTime(1760, audioCtx.currentTime + 0.1);
 
-    gainNode.gain.setValueAtTime(1, audioCtx.currentTime); // Max volume
+    gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
 
     oscillator.start();
@@ -473,6 +513,7 @@ function toggleTimer(btn, initialDuration) {
     // If alarm is ringing (btn says "Arrêter")
     if (btn.classList.contains('alarm-active')) {
         stopAlarm();
+        toggleSilentKeeper(false); // Stop Keep-Alive
         btn.classList.remove('alarm-active');
         btn.textContent = 'Terminé';
         timerendTime = null;
@@ -484,13 +525,13 @@ function toggleTimer(btn, initialDuration) {
         // Pause
         clearInterval(intervalId);
         intervalId = null;
+        toggleSilentKeeper(false); // Stop Keep-Alive
         timerendTime = null;
         saveState();
         btn.textContent = 'Reprendre';
     } else {
         // Start
-        // Initialize/Wake up AudioContext immediately on this click!
-        ensureAudioReady();
+        toggleSilentKeeper(true); // Start Keep-Alive (Must be user gesture)
 
         if (Notification && Notification.permission !== "granted" && Notification.permission !== "denied") {
             Notification.requestPermission();
@@ -518,6 +559,7 @@ function toggleTimer(btn, initialDuration) {
             if (remainingTime <= 0) {
                 clearInterval(intervalId);
                 intervalId = null;
+                toggleSilentKeeper(false); // Stop Keep-Alive (Alarm will take over)
 
                 btn.textContent = 'ALERTE - Arrêter';
                 btn.classList.add('alarm-active');
@@ -537,6 +579,7 @@ function toggleTimer(btn, initialDuration) {
 function resetTimer(startBtn, initialDuration) {
     clearInterval(intervalId);
     intervalId = null;
+    toggleSilentKeeper(false); // Stop Keep-Alive
     timerendTime = null;
     remainingTime = initialDuration;
     saveState();
