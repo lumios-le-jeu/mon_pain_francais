@@ -112,13 +112,18 @@ function updateProgressDots() {
 }
 
 function navigate(direction) {
+    // Always reset timer state when navigating
     if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
-        timerendTime = null;
-        remainingTime = null;
-        saveState();
     }
+    // Ensure audio/alarm are stopped
+    toggleSilentKeeper(false);
+    stopAlarm();
+
+    timerendTime = null;
+    remainingTime = null;
+    saveState();
 
     const newIndex = currentStepIndex + direction;
     if (newIndex >= 0 && newIndex < recipeData.steps.length) {
