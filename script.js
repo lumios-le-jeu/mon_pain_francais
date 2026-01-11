@@ -48,17 +48,21 @@ function saveState() {
         weight: userTargetWeight,
         timerEndTime: timerendTime // Save absolute timestamp
     };
-    localStorage.setItem('breadAppState', JSON.stringify(state));
+    try {
+        localStorage.setItem('breadAppState', JSON.stringify(state));
+    } catch (e) {
+        console.warn("Storage failed (Private Mode?):", e);
+    }
 }
 
 function loadState() {
-    const saved = localStorage.getItem('breadAppState');
-    if (saved) {
-        try {
+    try {
+        const saved = localStorage.getItem('breadAppState');
+        if (saved) {
             const state = JSON.parse(saved);
             currentStepIndex = state.step || 0;
             userTargetWeight = state.weight || 1700;
-            weightInput.value = userTargetWeight;
+            if (weightInput) weightInput.value = userTargetWeight;
 
             // Timer Recovery
             if (state.timerEndTime) {
@@ -73,9 +77,9 @@ function loadState() {
                     remainingTime = 0; // Finished while away
                 }
             }
-        } catch (e) {
-            console.error("Error loading state", e);
         }
+    } catch (e) {
+        console.warn("Load state failed:", e);
     }
 }
 
@@ -418,7 +422,7 @@ function toggleSilentKeeper(shouldPlay) {
 
         // Resume if needed
         if (audioCtx.state === 'suspended') {
-            audioCtx.resume().catch(e => console.log(e));
+            audioCtx.resume().catch(e => console.warn(e));
         }
 
         if (shouldPlay) {
@@ -533,11 +537,15 @@ function toggleTimer(btn, initialDuration) {
         // Start
         toggleSilentKeeper(true); // Start Keep-Alive (Must be user gesture)
 
-        if (Notification && Notification.permission !== "granted" && Notification.permission !== "denied") {
-            Notification.requestPermission();
+        try {
+            if (typeof Notification !== 'undefined' && Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission().catch(e => console.log("Notif error", e));
+            }
+        } catch (e) {
+            console.warn("Notifications not supported or blocked", e);
         }
 
-        if (!remainingTime) remainingTime = initialDuration;
+        if (!remainingTime) remainingTime = parseInt(initialDuration);
 
         if (!timerendTime) {
             timerendTime = Date.now() + (remainingTime * 1000);
